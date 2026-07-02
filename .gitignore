@@ -1,0 +1,8 @@
+*.iso
+*.zip
+*.tgz
+*.log
+img
+build
+output-*
+packer_cache
