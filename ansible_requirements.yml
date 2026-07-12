@@ -1,0 +1,11 @@
+---
+# Install Collections and Roles with Ansible Galaxy
+# ansible-galaxy install -r ansible_requirements.yml
+
+collections:
+  - name: ..
+    type: dir
+  - name: community.general
+    version: ">=10.4.0"
+
+roles:

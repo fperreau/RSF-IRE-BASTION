@@ -1,0 +1,16 @@
+all:
+  vars:
+    ansible_ssh_private_key_file: ~/.ssh/fperreau
+  children:
+    hosts:
+      incusos1: 10.50.0.100
+    web_servers:
+      hosts:
+        web1:
+          ansible_host: 10.50.0.60
+        web2:
+          ansible_host: 10.50.0.61
+    db_servers:
+      hosts:
+        db1:
+          ansible_host: 10.50.0.70

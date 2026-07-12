@@ -1,0 +1,15 @@
+---
+- name: restart ssh in bastion container
+  community.general.incus_container_exec:
+    container: bastion-ssh
+    command: "{{ incus_ssh_restart_command }}"
+
+- name: run apt-mirror in apt-cache container
+  community.general.incus_container_exec:
+    container: apt-cache
+    command: "{{ incus_apt_mirror_run_command }}"
+
+- name: restart nginx in apt-cache container
+  community.general.incus_container_exec:
+    container: apt-cache
+    command: "{{ incus_nginx_restart_command }}"

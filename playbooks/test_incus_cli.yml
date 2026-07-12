@@ -1,0 +1,34 @@
+---
+- name: Test Incus CLI
+  hosts: localhost
+  connection: local
+  become: false
+  gather_facts: false
+
+  vars:
+    image: "images:debian/13"
+    container: "c3"
+    profile: "default"
+    remote: "incusos1"
+
+  tasks:
+    - name: Test Incus CLI
+      shell: |
+        incus profile list
+        incus list
+        incus network list
+        incus storage list
+        incus storage volume list local
+      register: result
+      changed_when: false
+
+    - name: Show Result
+      debug:
+        var: result
+  
+    - name: Déployer un conteneur sur un serveur distant avec profil
+      incus_cli:
+        command: |
+          incus init {{ image }} {{ container }}
+          incus start {{ container }}
+#        remote: "{{ remote }}"

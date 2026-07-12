@@ -1,3 +1,6 @@
+.venv
+.config
+.ansible
 *.iso
 *.zip
 *.tgz

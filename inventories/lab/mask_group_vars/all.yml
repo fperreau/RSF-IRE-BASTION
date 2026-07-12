@@ -1,0 +1,98 @@
+---
+# Incus configuration
+incus_storage_pool: local
+incus_network: incusbr0
+incus_network_cidr: 10.50.0.0/24
+incus_network_gateway: 10.50.0.1
+
+# Containers
+incus_ssh_image: images:alpine/3.18
+incus_apt_image: images:debian/13
+incus_registry_image: images:ubuntu/24.04
+
+incus_ssh_ip: 10.50.0.50
+incus_apt_ip: 10.50.0.51
+incus_registry_ip: 10.50.0.52
+
+# SSH configuration
+incus_ssh_config:
+  raw.lxc: |
+    lxc.include = /usr/share/lxc/config/common.conf
+    lxc.arch = amd64
+    lxc.cgroup.devices.deny = a
+    lxc.cap.drop = sys_module mac_admin mac_override sys_time
+
+incus_ssh_devices:
+  eth0:
+    type: nic
+    nictype: bridged
+    parent: "{{ incus_network }}"
+    ipv4.address: "{{ incus_ssh_ip }}"
+  root:
+    type: disk
+    source: /var/lib/incus/storage-pools/{{ incus_storage_pool }}/containers/bastion-ssh
+    path: /root
+
+incus_ssh_config_path: /etc/ssh/sshd_config
+incus_ssh_config_lines:
+  - { regexp: '^PermitRootLogin', line: 'PermitRootLogin no' }
+  - { regexp: '^PasswordAuthentication', line: 'PasswordAuthentication no' }
+  - { regexp: '^PubkeyAuthentication', line: 'PubkeyAuthentication yes' }
+  - { regexp: '^ClientAliveInterval', line: 'ClientAliveInterval 300' }
+  - { regexp: '^ClientAliveCountMax', line: 'ClientAliveCountMax 2' }
+
+incus_ssh_install_command: apk add --no-cache openssh
+incus_ssh_restart_command: rc-service sshd restart
+
+# APT cache configuration
+incus_apt_config:
+  raw.lxc: |
+    lxc.include = /usr/share/lxc/config/common.conf
+    lxc.arch = amd64
+
+incus_apt_devices:
+  eth0:
+    type: nic
+    nictype: bridged
+    parent: "{{ incus_network }}"
+    ipv4.address: "{{ incus_apt_ip }}"
+  apt-cache:
+    type: disk
+    source: /var/lib/incus/storage-pools/{{ incus_storage_pool }}/containers/apt-cache
+    path: /var/spool/apt-mirror
+
+incus_apt_mirror_config: |
+  deb http://deb.debian.org/debian bookworm main contrib non-free
+  deb http://deb.debian.org/debian bookworm-updates main contrib non-free
+  deb http://security.debian.org/debian-security bookworm-security main contrib non-free
+  clean http://deb.debian.org/debian
+  clean http://security.debian.org/debian-security
+
+incus_apt_install_command: apt update && apt install -y apt-mirror nginx
+incus_apt_mirror_run_command: apt-mirror
+incus_nginx_restart_command: service nginx restart
+
+# Docker registry configuration
+incus_registry_config:
+  raw.lxc: |
+    lxc.include = /usr/share/lxc/config/common.conf
+    lxc.arch = amd64
+
+incus_registry_devices:
+  eth0:
+    type: nic
+    nictype: bridged
+    parent: "{{ incus_network }}"
+    ipv4.address: "{{ incus_registry_ip }}"
+  registry-data:
+    type: disk
+    source: /var/lib/incus/storage-pools/{{ incus_storage_pool }}/containers/docker-registry
+    path: /var/lib/registry
+
+incus_registry_install_command: apt update && apt install -y docker.io
+incus_registry_start_command: docker run -d --name registry -p 5000:5000 -v /var/lib/registry:/var/lib/registry registry:2
+
+# SSH keys
+ssh_authorized_keys:
+  - "{{ lookup('file', '~/.ssh/fperreau.pub') }}"
+:

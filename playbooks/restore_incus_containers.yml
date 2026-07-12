@@ -1,0 +1,25 @@
+---
+- name: Restore Incus containers
+  hosts: incus_servers
+  become: yes
+  vars:
+    backup_dir: /backups/incus/2024-07-01T12-00-00  # À adapter
+  tasks:
+    - name: Import containers
+      community.general.incus_container:
+        name: "{{ item }}"
+        state: imported
+        import_file: "{{ backup_dir }}/{{ item }}.tar.gz"
+      loop:
+        - bastion-ssh
+        - apt-cache
+        - docker-registry
+
+    - name: Start containers
+      community.general.incus_container:
+        name: "{{ item }}"
+        state: started
+      loop:
+        - bastion-ssh
+        - apt-cache
+        - docker-registry

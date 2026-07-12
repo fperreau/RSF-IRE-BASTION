@@ -1,0 +1,25 @@
+---
+- name: Deploy immutable bastion with Incus
+  hosts: incus_servers
+  become: yes
+  roles:
+    - common
+    - hardening
+    - incus
+  tasks:
+    - name: Wait for containers to be ready
+      ansible.builtin.pause:
+        minutes: 1
+
+    - name: Verify containers are running
+      community.general.incus_container_info:
+        name: "{{ item }}"
+      loop:
+        - bastion-ssh
+        - apt-cache
+        - docker-registry
+      register: container_status
+
+    - name: Debug container status
+      ansible.builtin.debug:
+        var: container_status.results

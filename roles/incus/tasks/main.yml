@@ -1,0 +1,9 @@
+---
+- name: Include storage configuration
+  ansible.builtin.include_tasks: storage.yml
+
+- name: Include network configuration
+  ansible.builtin.include_tasks: network.yml
+
+- name: Include containers configuration
+  ansible.builtin.include_tasks: containers.yml

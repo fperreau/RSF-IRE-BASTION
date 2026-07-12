@@ -1,0 +1,27 @@
+---
+- name: Update Incus bastion
+  hosts: incus_servers
+  become: yes
+  tasks:
+    - name: Update Incus
+      ansible.builtin.command: incus update
+      register: update_result
+      changed_when: "'updates available' in update_result.stdout"
+
+    - name: Reboot if updated
+      ansible.builtin.reboot:
+        msg: "Reboot to apply Incus update"
+        connect_timeout: 5
+        reboot_timeout: 600
+        pre_reboot_delay: 0
+        post_reboot_delay: 30
+      when: update_result.changed
+
+    - name: Update containers
+      community.general.incus_container:
+        name: "{{ item }}"
+        state: restarted
+      loop:
+        - bastion-ssh
+        - apt-cache
+        - docker-registry

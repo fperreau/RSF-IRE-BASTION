@@ -1,0 +1,58 @@
+---
+- name: Install and configure SSH in bastion container
+  block:
+    - name: Install OpenSSH
+      community.general.incus_container_exec:
+        container: bastion-ssh
+        command: "{{ incus_ssh_install_command }}"
+
+    - name: Configure SSH
+      ansible.builtin.lineinfile:
+        path: "/var/lib/incus/containers/bastion-ssh/rootfs{{ incus_ssh_config_path }}"
+        line: "{{ item.line }}"
+        regexp: "{{ item.regexp }}"
+      loop: "{{ incus_ssh_config_lines }}"
+      notify: restart ssh in bastion container
+
+    - name: Add SSH authorized key
+      ansible.builtin.copy:
+        content: "{{ item }}"
+        dest: "/var/lib/incus/containers/bastion-ssh/rootfs/root/.ssh/authorized_keys"
+        mode: "0600"
+      loop: "{{ ssh_authorized_keys }}"
+  become: yes
+
+- name: Install and configure APT mirror
+  block:
+    - name: Install apt-mirror and nginx
+      community.general.incus_container_exec:
+        container: apt-cache
+        command: "{{ incus_apt_install_command }}"
+
+    - name: Configure apt-mirror
+      ansible.builtin.copy:
+        content: "{{ incus_apt_mirror_config }}"
+        dest: "/var/lib/incus/containers/apt-cache/rootfs/etc/apt/mirror.list"
+        mode: "0644"
+      notify: run apt-mirror in apt-cache container
+
+    - name: Configure nginx
+      ansible.builtin.copy:
+        content: "{{ incus_nginx_config }}"
+        dest: "/var/lib/incus/containers/apt-cache/rootfs/etc/nginx/sites-available/default"
+        mode: "0644"
+      notify: restart nginx in apt-cache container
+  become: yes
+
+- name: Install and configure Docker registry
+  block:
+    - name: Install Docker
+      community.general.incus_container_exec:
+        container: docker-registry
+        command: "{{ incus_registry_install_command }}"
+
+    - name: Start Docker registry
+      community.general.incus_container_exec:
+        container: docker-registry
+        command: "{{ incus_registry_start_command }}"
+  become: yes

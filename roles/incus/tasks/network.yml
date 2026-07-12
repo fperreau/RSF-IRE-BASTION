@@ -1,0 +1,11 @@
+---
+- name: Configure Incus bridge network
+  community.general.incus_network:
+    name: incusbr0
+    type: bridge
+    state: present
+    config:
+      ipv4.address: "{{ incus_network_gateway }}/{{ incus_network_cidr | regex_replace('^.*/(\\d+)$', '\\1') }}"
+      ipv4.nat: "true"
+      ipv6.address: none
+  become: yes

@@ -1,0 +1,29 @@
+---
+- name: Backup Incus containers
+  hosts: incus_servers
+  become: yes
+  vars:
+    backup_dir: /backups/incus/{{ ansible_date_time.iso8601 }}
+  tasks:
+    - name: Create backup directory
+      ansible.builtin.file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Export containers
+      community.general.incus_container:
+        name: "{{ item }}"
+        state: exported
+        export_file: "{{ backup_dir }}/{{ item }}.tar.gz"
+      loop:
+        - bastion-ssh
+        - apt-cache
+        - docker-registry
+
+    - name: Backup container configurations
+      ansible.builtin.command: incus config show {{ item }} > {{ backup_dir }}/{{ item }}.config
+      loop:
+        - bastion-ssh
+        - apt-cache
+        - docker-registry

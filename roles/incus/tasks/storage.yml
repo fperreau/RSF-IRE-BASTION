@@ -1,0 +1,20 @@
+---
+- name: Check if ZFS pool exists
+  ansible.builtin.command: zpool list
+  register: zpool_list
+  changed_when: false
+
+- name: Create ZFS pool for Incus
+  ansible.builtin.command: zpool create incus-pool /dev/sdX
+  when:
+    - ansible_devices['sdX'] is defined
+    - "'incus-pool' not in zpool_list.stdout"
+  become: yes
+
+- name: Configure Incus storage pool (ZFS)
+  community.general.incus_storage_pool:
+    name: incus-pool
+    driver: zfs
+    source: incus-pool
+    state: present
+  become: yes

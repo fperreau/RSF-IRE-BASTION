@@ -1,0 +1,16 @@
+---
+- name: Test Incus version
+  hosts: all
+  become: false
+  gather_facts: false
+
+  tasks:
+    - name: Get version of incus
+      ansible.builtin.shell: |
+        apt update
+      register: result
+      changed_when: false
+
+    - name: Print version
+      ansible.builtin.debug:
+        msg: "{{ result.stdout }}"
