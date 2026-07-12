@@ -406,12 +406,24 @@ class IncusCliModule:
     def _process_remote_command(self, command):
         """Process command to add remote prefix if specified"""
         if self.remote and command.strip().startswith('incus'):
-            # Split the command to insert remote after 'incus'
             parts = command.split()
-            if len(parts) >= 1 and parts[0] == 'incus':
-                # Insert remote after 'incus' with colon
-                parts.insert(1, f"{self.remote}:")
-                return ' '.join(parts)
+            # Find positional arguments (those not starting with -)
+            positionals_info = []
+            for i in range(1, len(parts)):
+                if not parts[i].startswith('-'):
+                    positionals_info.append((i, parts[i]))
+            
+            # Check if this is an instance creation command
+            creation_commands = ['launch', 'init', 'create']
+            if len(positionals_info) > 1:
+                if positionals_info[0][1] in creation_commands:
+                    # The instance name is the last positional argument
+                    # Syntax: incus init images:debian/13 incusos1:c3 --vm
+                    instance_idx, instance_name = positionals_info[-1]
+                    # Only add remote if not already specified
+                    if ':' not in instance_name:
+                        parts[instance_idx] = f"{self.remote}:{instance_name}"
+                        return ' '.join(parts)
         return command
     
     def run(self):

@@ -31,4 +31,4 @@
         command: |
           incus init {{ image }} {{ container }}
           incus start {{ container }}
-#        remote: "{{ remote }}"
+        remote: "{{ remote }}"
