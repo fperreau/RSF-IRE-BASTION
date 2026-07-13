@@ -113,3 +113,5 @@ ou
 sudo yum update
 ```
 
+Set-VMProcessor -VMName incusos -ExposeVirtualizationExtensions $true
+

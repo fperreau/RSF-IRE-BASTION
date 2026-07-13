@@ -1,8 +1,14 @@
 all:
   hosts:
-    c1:
+    incusos1:
       ansible_connection: community.general.incus
       ansible_incus_remote: incusos1
       ansible_incus_project: default
-      ansible_incus_host: c1
       ansible_user: root
+    vars:
+      ansible_python_interpreter: /usr/bin/python3
+    children:
+      test_group:
+        c1:
+        c2:
+      

@@ -1,4 +1,5 @@
 .venv
+.ansible
 .config
 .ansible
 *.iso

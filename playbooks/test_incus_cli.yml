@@ -8,27 +8,38 @@
   vars:
     image: "images:debian/13"
     container: "c3"
-    profile: "default"
-    remote: "incusos1"
 
   tasks:
-    - name: Test Incus CLI
-      shell: |
-        incus profile list
-        incus list
-        incus network list
-        incus storage list
-        incus storage volume list local
+  # - name: Test Incus CLI
+  #   shell: |
+  #     incus profile list
+  #     incus list
+  #     incus network list
+  #     incus storage list
+  #     incus storage volume list local
+  #   register: result
+  #   changed_when: false
+  # - name: Show Result
+  #   debug:
+  #    var: result
+
+    - name: List containers
+      incus_cli:
+        command: incus list
       register: result
       changed_when: false
 
-    - name: Show Result
-      debug:
-        var: result
-  
-    - name: Déployer un conteneur sur un serveur distant avec profil
+  # - name: Déployer un conteneur sur un serveur distant
+  #   incus_cli:
+  #     command: |
+  #       incus init {{ image }} {{ container }}
+  #       incus start {{ container }}
+  #     remote: "{{ remote }}"
+  #   when: container not in result.stdout
+
+    - name: Déployer un conteneur sur un serveur distant
       incus_cli:
-        command: |
-          incus init {{ image }} {{ container }}
-          incus start {{ container }}
-        remote: "{{ remote }}"
+        template: /mnt/c/Users/FredericPerreau/Project/_IRE_/RSF-IRE-BASTION/templates/create_container.j2
+        image: "{{ image }}"
+        container: "{{ container }}"
+      when: container not in result.stdout

@@ -225,11 +225,13 @@ class IncusCliModule:
             command=dict(type='str', required=False, default=None),
             template=dict(type='str', required=False, default=None),
             remote=dict(type='str', required=False, default=None),
-            profile=dict(type='str', required=False, default=None),
+            profile=dict(type='str', required=False, default="Default"),
             chdir=dict(type='str', required=False, default=None),
             environment=dict(type='dict', required=False, default={}),
             ignore_errors=dict(type='bool', required=False, default=False),
             return_output=dict(type='bool', required=False, default=True),
+            image=dict(type='str', required=False, default=None),
+            container=dict(type='str', required=False, default=None),
         )
         
         # Initialize the Ansible module
@@ -253,7 +255,6 @@ class IncusCliModule:
         self.environment = self.module.params['environment']
         self.ignore_errors = self.module.params['ignore_errors']
         self.return_output = self.module.params['return_output']
-
         self._inventory_hostname = getattr(self.module, '_inventory_hostname', None)
         self._inventory_hostname_short = getattr(self.module, '_inventory_hostname_short', None)
         self._playbook_dir = getattr(self.module, '_playbook_dir', None)
@@ -267,6 +268,8 @@ class IncusCliModule:
             'stderr': '',
             'rc': 0,
             'commands_executed': [],
+            'rendered_commands': [],
+            'debug_info': {},  # Add debug information storage
         }
     
     def _render_template(self, template_content, variables):
@@ -306,6 +309,17 @@ class IncusCliModule:
             template_dir = os.path.dirname(template_path) or '.'
             template_file = os.path.basename(template_path)
             
+            # Read template content for debugging
+            template_content = None
+            if os.path.exists(template_path):
+                with open(template_path, 'r') as f:
+                    template_content = f.read()
+                self.result['debug_info']['template_content'] = template_content
+                self.result['debug_info']['template_path'] = template_path
+                self.result['debug_info']['template_exists'] = True
+            else:
+                self.result['debug_info']['template_exists'] = False
+            
             # Create Jinja2 environment with FileSystemLoader
             env = Environment(
                 loader=FileSystemLoader(template_dir),
@@ -324,17 +338,43 @@ class IncusCliModule:
             
             # Load and render template
             template = env.get_template(template_file)
+            
+            self.result['debug_info']['variables_passed_count'] = len(variables)
+            self.result['debug_info']['variables_passed_keys'] = list(variables.keys())
+            
             rendered = template.render(**variables)
+            
+            self.result['debug_info']['rendered_output'] = rendered
+            self.result['debug_info']['rendered_length'] = len(rendered)
+            
+            if rendered == "incus launch":
+                self.result['debug_info']['warning'] = "Rendered to 'incus launch' without arguments - variables not substituted!"
+            
             return rendered
         except Exception as e:
             self.module.fail_json(
                 msg=f"Failed to render template file {template_path}: {str(e)}",
                 error=str(e),
-                path=template_path
+                path=template_path,
+                available_variables=variables,
+                debug_info=self.result['debug_info']
             )
     
     def _execute_command(self, command, cwd=None, env_vars=None):
         """Execute a single command via subprocess"""
+        # Remove comments from command (everything after #)
+        command_cleaned = self._remove_comments(command)
+        command_cleaned = command_cleaned.strip()
+        
+        if not command_cleaned:
+            # Command is empty after removing comments - silently skip
+            return {
+                'stdout': '',
+                'stderr': '',
+                'rc': 0,
+                'command': command
+            }
+        
         try:
             # Prepare environment
             final_env = os.environ.copy()
@@ -343,7 +383,7 @@ class IncusCliModule:
             
             # Execute command
             process = subprocess.Popen(
-                shlex.split(command),
+                shlex.split(command_cleaned),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=cwd,
@@ -368,39 +408,93 @@ class IncusCliModule:
                 'command': command
             }
     
+    def _remove_comments(self, line):
+        """Remove comments from a command line (# and everything after)"""
+        # Find the position of # (but not if it's inside quotes)
+        in_single_quote = False
+        in_double_quote = False
+        
+        for i, char in enumerate(line):
+            # Toggle quote flags
+            if char == "'" and not in_double_quote:
+                in_single_quote = not in_single_quote
+            elif char == '"' and not in_single_quote:
+                in_double_quote = not in_double_quote
+            # If we find # outside of quotes, truncate here
+            elif char == '#' and not in_single_quote and not in_double_quote:
+                return line[:i]
+        
+        # No comment found
+        return line
+    
     def _get_ansible_variables(self):
         """Get all available Ansible variables and module parameters"""
         variables = {}
+        debug_info = {}
         
-        # Add module parameters (excluding command and template which are handled separately)
-        for param_name in ['remote', 'profile']:
-            param_value = self.module.params.get(param_name)
+        # PRIORITY 1: Get all Ansible context variables (this includes playbook vars:, host_vars, group_vars, facts)
+        # This is the PRIMARY source for Ansible variables
+        if hasattr(self.module, 'vars') and self.module.vars:
+            debug_info['module_vars_found'] = list(self.module.vars.keys())
+            variables.update(self.module.vars)
+        else:
+            debug_info['module_vars_found'] = None
+        
+        # PRIORITY 2: Add module parameters (these override context variables)
+        module_params = {}
+        for param_name, param_value in self.module.params.items():
+            if param_name in ('command', 'template'):
+                continue
             if param_value is not None:
+                module_params[param_name] = param_value
                 variables[param_name] = param_value
         
-        # Add host variables
-        if hasattr(self.module, '_host_vars'):
-            variables.update(self.module._host_vars)
+        if module_params:
+            debug_info['module_params_found'] = list(module_params.keys())
         
-        # Add group variables
-        if hasattr(self.module, '_group_vars'):
+        # PRIORITY 3: Add fallback host variables (for compatibility)
+        if hasattr(self.module, '_host_vars') and self.module._host_vars:
+            host_vars = {k: v for k, v in self.module._host_vars.items() if k not in variables}
+            if host_vars:
+                debug_info['host_vars_found'] = list(host_vars.keys())
+                variables.update(host_vars)
+        
+        # PRIORITY 4: Add fallback group variables (for compatibility)
+        if hasattr(self.module, '_group_vars') and self.module._group_vars:
+            group_vars_added = {}
             for group, vars_dict in self.module._group_vars.items():
-                variables[f'group_names.{group}'] = vars_dict
+                if vars_dict:
+                    for key, value in vars_dict.items():
+                        if key not in variables:
+                            group_vars_added[key] = value
+                            variables[key] = value
+            if group_vars_added:
+                debug_info['group_vars_found'] = list(group_vars_added.keys())
         
-        # Add facts
-        if hasattr(self.module, '_facts'):
-            variables.update(self.module._facts)
+        # PRIORITY 5: Add facts (for compatibility)
+        if hasattr(self.module, '_facts') and self.module._facts:
+            facts_added = {k: v for k, v in self.module._facts.items() if k not in variables}
+            if facts_added:
+                debug_info['facts_found'] = list(facts_added.keys())
+                variables.update(facts_added)
         
-        # Add special variables
-        if self._inventory_hostname:
+        # PRIORITY 6: Add special variables
+        if self._inventory_hostname and 'inventory_hostname' not in variables:
             variables['inventory_hostname'] = self._inventory_hostname
-        if self._inventory_hostname_short:
+        if self._inventory_hostname_short and 'inventory_hostname_short' not in variables:
             variables['inventory_hostname_short'] = self._inventory_hostname_short
-        if self._playbook_dir:
+        if self._playbook_dir and 'playbook_dir' not in variables:
             variables['playbook_dir'] = self._playbook_dir
-        if self._role_path:
+        if self._role_path and 'role_path' not in variables:
             variables['role_path'] = self._role_path
         
+        debug_info['total_vars'] = len(variables)
+        debug_info['var_keys'] = sorted(list(variables.keys()))
+        debug_info['image_var'] = variables.get('image', 'NOT FOUND')
+        debug_info['container_var'] = variables.get('container', 'NOT FOUND')
+        
+        self.result['debug_info'] = debug_info
+
         return variables
     
     def _process_remote_command(self, command):
@@ -444,10 +538,16 @@ class IncusCliModule:
         # Split by newlines and filter empty lines
         commands_to_execute = [cmd.strip() for cmd in rendered_commands.split('\n') if cmd.strip()]
         
+        # Filter out comment-only lines
+        commands_to_execute = [cmd for cmd in commands_to_execute if not cmd.startswith('#')]
+        
         # Check if we have commands to execute
         if not commands_to_execute:
             self.module.fail_json(
-                msg="No commands to execute after template rendering."
+                msg="No commands to execute after template rendering.",
+                available_variables=ansible_vars,
+                rendered_output=rendered_commands,
+                debug_info=self.result['debug_info']
             )
         
         # Process each command to add remote prefix if specified
@@ -457,6 +557,7 @@ class IncusCliModule:
             processed_commands.append(processed_cmd)
         
         # Execute each command
+        self.result['rendered_commands'] = commands_to_execute
         all_stdout = []
         all_stderr = []
         overall_rc = 0
