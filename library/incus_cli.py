@@ -238,7 +238,7 @@ class IncusCliModule:
             command=dict(type='str', required=False, default=None),
             template=dict(type='str', required=False, default=None),
             remote=dict(type='str', required=False, default=None),
-            profile=dict(type='str', required=False, default="Default"),
+            project=dict(type='str', required=False, default=None),
             chdir=dict(type='str', required=False, default=None),
             environment=dict(type='dict', required=False, default={}),
             vars=dict(type='dict', required=False, default={}),
@@ -263,7 +263,7 @@ class IncusCliModule:
         self.raw_command = self.module.params['command']
         self.template_path = self.module.params['template']
         self.remote = self.module.params['remote']
-        self.profile = self.module.params['profile']
+        self.project = self.module.params['project']
         self.chdir = self.module.params['chdir']
         self.environment = self.module.params['environment']
         self.extra_vars = self.module.params['vars']
