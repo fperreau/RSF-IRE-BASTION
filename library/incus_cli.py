@@ -7,6 +7,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from ansible.module_utils.basic import AnsibleModule
+from collections.abc import Mapping
 import subprocess
 import shlex
 import os
@@ -82,9 +83,21 @@ options:
         type: dict
         required: false
         default: {}
+    vars:
+        description:
+            - Additional variables to expose to Jinja templating
+        type: dict
+        required: false
+        default: {}
     ignore_errors:
         description:
             - Whether to ignore command execution errors
+        type: bool
+        required: false
+        default: false
+    debug:
+        description:
+            - Whether to include the rendered commands in result.stdout
         type: bool
         required: false
         default: false
@@ -228,7 +241,9 @@ class IncusCliModule:
             profile=dict(type='str', required=False, default="Default"),
             chdir=dict(type='str', required=False, default=None),
             environment=dict(type='dict', required=False, default={}),
+            vars=dict(type='dict', required=False, default={}),
             ignore_errors=dict(type='bool', required=False, default=False),
+            debug=dict(type='bool', required=False, default=False),
             return_output=dict(type='bool', required=False, default=True),
             image=dict(type='str', required=False, default=None),
             container=dict(type='str', required=False, default=None),
@@ -253,7 +268,9 @@ class IncusCliModule:
         self.profile = self.module.params['profile']
         self.chdir = self.module.params['chdir']
         self.environment = self.module.params['environment']
+        self.extra_vars = self.module.params['vars']
         self.ignore_errors = self.module.params['ignore_errors']
+        self.debug = self.module.params['debug']
         self.return_output = self.module.params['return_output']
         self._inventory_hostname = getattr(self.module, '_inventory_hostname', None)
         self._inventory_hostname_short = getattr(self.module, '_inventory_hostname_short', None)
@@ -272,44 +289,65 @@ class IncusCliModule:
             'debug_info': {},  # Add debug information storage
         }
     
-    def _render_template(self, template_content, variables):
-        """Render Jinja2 template with Ansible variables"""
+    def _create_jinja_environment(self, loader=None):
+        """Create a Jinja2 environment with Ansible-compatible filters."""
+        env = Environment(
+            loader=loader or BaseLoader(),
+            autoescape=False,
+            trim_blocks=True,
+            lstrip_blocks=True,
+        )
+
+        filters = {
+            'to_json': json.dumps,
+            'to_nice_json': lambda x: json.dumps(x, indent=2),
+            'bool': bool,
+            'int': int,
+            'float': float,
+            'string': str,
+        }
+
+        for name, func in filters.items():
+            env.filters[name] = func
+
+        return env
+
+    def _normalize_mapping(self, value):
+        """Return a plain dictionary from a mapping-like object."""
+        if isinstance(value, Mapping):
+            return dict(value)
+        return {}
+
+    def _merge_render_variables(self, variables, override_variables=None):
+        """Merge a base variable set with explicit render-time overrides."""
+        merged = self._normalize_mapping(variables)
+        override_map = self._normalize_mapping(override_variables)
+        for key, value in override_map.items():
+            if value is not None:
+                merged[key] = value
+        return merged
+
+    def _render_template(self, template_content, variables, override_variables=None):
+        """Render a Jinja2 template string with Ansible variables."""
+        render_variables = self._merge_render_variables(variables, override_variables)
         try:
-            # Create Jinja2 environment with Ansible-style filters
-            env = Environment(
-                loader=BaseLoader(),
-                autoescape=False,
-                trim_blocks=True,
-                lstrip_blocks=True,
-            )
-            
-            # Add common Ansible filters
-            env.filters['to_json'] = json.dumps
-            env.filters['to_nice_json'] = lambda x: json.dumps(x, indent=2)
-            env.filters['bool'] = bool
-            env.filters['int'] = int
-            env.filters['float'] = float
-            env.filters['string'] = str
-            
-            # Create template and render
+            env = self._create_jinja_environment()
             template = env.from_string(template_content)
-            rendered = template.render(**variables)
-            return rendered
+            return template.render(**render_variables)
         except Exception as e:
             self.module.fail_json(
                 msg=f"Failed to render template: {str(e)}",
                 error=str(e),
                 template=template_content
             )
-    
-    def _render_template_file(self, template_path, variables):
-        """Render Jinja2 template file with Ansible variables"""
+
+    def _render_template_file(self, template_path, variables, override_variables=None):
+        """Render a Jinja2 template file with Ansible variables."""
+        render_variables = self._merge_render_variables(variables, override_variables)
         try:
-            # Get the directory of the template for FileSystemLoader
             template_dir = os.path.dirname(template_path) or '.'
             template_file = os.path.basename(template_path)
-            
-            # Read template content for debugging
+
             template_content = None
             if os.path.exists(template_path):
                 with open(template_path, 'r') as f:
@@ -319,44 +357,28 @@ class IncusCliModule:
                 self.result['debug_info']['template_exists'] = True
             else:
                 self.result['debug_info']['template_exists'] = False
-            
-            # Create Jinja2 environment with FileSystemLoader
-            env = Environment(
-                loader=FileSystemLoader(template_dir),
-                autoescape=False,
-                trim_blocks=True,
-                lstrip_blocks=True,
-            )
-            
-            # Add common Ansible filters
-            env.filters['to_json'] = json.dumps
-            env.filters['to_nice_json'] = lambda x: json.dumps(x, indent=2)
-            env.filters['bool'] = bool
-            env.filters['int'] = int
-            env.filters['float'] = float
-            env.filters['string'] = str
-            
-            # Load and render template
+
+            env = self._create_jinja_environment(FileSystemLoader(template_dir))
             template = env.get_template(template_file)
-            
-            self.result['debug_info']['variables_passed_count'] = len(variables)
-            self.result['debug_info']['variables_passed_keys'] = list(variables.keys())
-            
-            rendered = template.render(**variables)
-            
+
+            self.result['debug_info']['variables_passed_count'] = len(render_variables)
+            self.result['debug_info']['variables_passed_keys'] = list(render_variables.keys())
+
+            rendered = template.render(**render_variables)
+
             self.result['debug_info']['rendered_output'] = rendered
             self.result['debug_info']['rendered_length'] = len(rendered)
-            
+
             if rendered == "incus launch":
                 self.result['debug_info']['warning'] = "Rendered to 'incus launch' without arguments - variables not substituted!"
-            
+
             return rendered
         except Exception as e:
             self.module.fail_json(
                 msg=f"Failed to render template file {template_path}: {str(e)}",
                 error=str(e),
                 path=template_path,
-                available_variables=variables,
+                available_variables=render_variables,
                 debug_info=self.result['debug_info']
             )
     
@@ -427,58 +449,69 @@ class IncusCliModule:
         # No comment found
         return line
     
-    def _get_ansible_variables(self):
-        """Get all available Ansible variables and module parameters"""
+    def _get_ansible_variables(self, override_variables=None):
+        """Build a merged view of Ansible variables available to the module."""
         variables = {}
         debug_info = {}
-        
-        # PRIORITY 1: Get all Ansible context variables (this includes playbook vars:, host_vars, group_vars, facts)
-        # This is the PRIMARY source for Ansible variables
-        if hasattr(self.module, 'vars') and self.module.vars:
-            debug_info['module_vars_found'] = list(self.module.vars.keys())
-            variables.update(self.module.vars)
+
+        context_vars = self._normalize_mapping(getattr(self.module, 'vars', None) or {})
+        if context_vars:
+            variables.update(context_vars)
+            debug_info['module_vars_found'] = sorted(context_vars.keys())
         else:
-            debug_info['module_vars_found'] = None
-        
-        # PRIORITY 2: Add module parameters (these override context variables)
+            debug_info['module_vars_found'] = []
+
         module_params = {}
         for param_name, param_value in self.module.params.items():
-            if param_name in ('command', 'template'):
+            if param_name in ('command', 'template', 'vars'):
                 continue
             if param_value is not None:
                 module_params[param_name] = param_value
                 variables[param_name] = param_value
-        
+
         if module_params:
-            debug_info['module_params_found'] = list(module_params.keys())
-        
-        # PRIORITY 3: Add fallback host variables (for compatibility)
-        if hasattr(self.module, '_host_vars') and self.module._host_vars:
-            host_vars = {k: v for k, v in self.module._host_vars.items() if k not in variables}
-            if host_vars:
-                debug_info['host_vars_found'] = list(host_vars.keys())
-                variables.update(host_vars)
-        
-        # PRIORITY 4: Add fallback group variables (for compatibility)
-        if hasattr(self.module, '_group_vars') and self.module._group_vars:
-            group_vars_added = {}
-            for group, vars_dict in self.module._group_vars.items():
-                if vars_dict:
+            debug_info['module_params_found'] = sorted(module_params.keys())
+
+        explicit_vars = self._normalize_mapping(self.extra_vars or {})
+        if explicit_vars:
+            variables.update(explicit_vars)
+            debug_info['extra_vars_found'] = sorted(explicit_vars.keys())
+        else:
+            debug_info['extra_vars_found'] = []
+
+        host_vars = self._normalize_mapping(getattr(self.module, '_host_vars', None) or {})
+        host_vars_added = {k: v for k, v in host_vars.items() if k not in variables}
+        if host_vars_added:
+            debug_info['host_vars_found'] = sorted(host_vars_added.keys())
+            variables.update(host_vars_added)
+
+        group_vars_collection = self._normalize_mapping(getattr(self.module, '_group_vars', None) or {})
+        group_vars_added = {}
+        if isinstance(getattr(self.module, '_group_vars', None), Mapping):
+            for _, vars_dict in self.module._group_vars.items():
+                if isinstance(vars_dict, Mapping):
                     for key, value in vars_dict.items():
                         if key not in variables:
                             group_vars_added[key] = value
                             variables[key] = value
-            if group_vars_added:
-                debug_info['group_vars_found'] = list(group_vars_added.keys())
-        
-        # PRIORITY 5: Add facts (for compatibility)
-        if hasattr(self.module, '_facts') and self.module._facts:
-            facts_added = {k: v for k, v in self.module._facts.items() if k not in variables}
-            if facts_added:
-                debug_info['facts_found'] = list(facts_added.keys())
-                variables.update(facts_added)
-        
-        # PRIORITY 6: Add special variables
+        if group_vars_added:
+            debug_info['group_vars_found'] = sorted(group_vars_added.keys())
+
+        facts = self._normalize_mapping(getattr(self.module, '_facts', None) or {})
+        facts_added = {k: v for k, v in facts.items() if k not in variables}
+        if facts_added:
+            debug_info['facts_found'] = sorted(facts_added.keys())
+            variables.update(facts_added)
+
+        override_map = self._normalize_mapping(override_variables)
+        if override_map:
+            for key, value in override_map.items():
+                if value is not None:
+                    variables[key] = value
+            debug_info['render_override_vars_found'] = sorted(override_map.keys())
+        else:
+            debug_info['render_override_vars_found'] = []
+
         if self._inventory_hostname and 'inventory_hostname' not in variables:
             variables['inventory_hostname'] = self._inventory_hostname
         if self._inventory_hostname_short and 'inventory_hostname_short' not in variables:
@@ -487,12 +520,12 @@ class IncusCliModule:
             variables['playbook_dir'] = self._playbook_dir
         if self._role_path and 'role_path' not in variables:
             variables['role_path'] = self._role_path
-        
+
         debug_info['total_vars'] = len(variables)
         debug_info['var_keys'] = sorted(list(variables.keys()))
         debug_info['image_var'] = variables.get('image', 'NOT FOUND')
         debug_info['container_var'] = variables.get('container', 'NOT FOUND')
-        
+
         self.result['debug_info'] = debug_info
 
         return variables
@@ -522,9 +555,11 @@ class IncusCliModule:
     
     def run(self):
         """Main execution method"""
-        # Collect all Ansible variables and module parameters
+        # Collect all Ansible variables and module parameters.
+        # The precedence is intentionally aligned to a simple Ansible-like model:
+        # context vars -> explicit task vars -> module parameters -> explicit render overrides.
         ansible_vars = self._get_ansible_variables()
-        
+
         # Determine the source of commands (command string or template file)
         if self.template_path:
             # Render template file
@@ -558,6 +593,7 @@ class IncusCliModule:
         
         # Execute each command
         self.result['rendered_commands'] = commands_to_execute
+        self.result['debug_info']['rendered_command_count'] = len(commands_to_execute)
         all_stdout = []
         all_stderr = []
         overall_rc = 0
@@ -589,7 +625,17 @@ class IncusCliModule:
                     self.result['changed'] = True
         
         # Aggregate output
-        self.result['stdout'] = '\n'.join(all_stdout) if self.return_output else ''
+        rendered_output = '\n'.join(commands_to_execute)
+        command_output = '\n'.join(all_stdout) if self.return_output else ''
+
+        if self.debug:
+            if command_output:
+                self.result['stdout'] = rendered_output + '\n' + command_output
+            else:
+                self.result['stdout'] = rendered_output
+        else:
+            self.result['stdout'] = command_output
+
         self.result['stderr'] = '\n'.join(all_stderr)
         self.result['rc'] = overall_rc
         

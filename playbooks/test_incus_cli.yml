@@ -40,6 +40,8 @@
     - name: Déployer un conteneur sur un serveur distant
       incus_cli:
         template: /mnt/c/Users/FredericPerreau/Project/_IRE_/RSF-IRE-BASTION/templates/create_container.j2
-        image: "{{ image }}"
-        container: "{{ container }}"
+        debug: true
+        vars:
+          image: "{{ image }}"
+          container: c4
       when: container not in result.stdout
