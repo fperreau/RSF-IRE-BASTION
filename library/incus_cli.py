@@ -245,8 +245,6 @@ class IncusCliModule:
             ignore_errors=dict(type='bool', required=False, default=False),
             debug=dict(type='bool', required=False, default=False),
             return_output=dict(type='bool', required=False, default=True),
-            image=dict(type='str', required=False, default=None),
-            container=dict(type='str', required=False, default=None),
         )
         
         # Initialize the Ansible module
