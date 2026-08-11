@@ -9,86 +9,120 @@ project:
   description: Mise en oeuvre d'un airgap pour des opérations automatisées contrôlées manuellement.
 
   hypervisors:
-    - name: bastion
-      description: Secure Hypervisor
-      type: vm
-      image: IncusOS
-      parent: null
-      fqdn: bastion.home.arpa
-      addresses: []
-      ressources:
-        cpu: 4
+    - name: LAB
+      description: Serveur IncusOS immuable hébergeant mon Home Lab.
+      fqdn: incus.home.arpa
+      parent: none
+      image: "incusos:stable"
+      addresses: [ 192.168.1.201 ]
+      api: https://192.168.1.201:8443
+      limits:
+        cpu: 8
         memory: 16G     
       disks:
-        - name: root
+        - path: "/"
+          pool: zvol1
           size: 50G
-          type: root
-          pool: local
+          type: disk
+      networks:
+        - name: incusbr0
 
-      containers:
-        - name: the-bastion
-          type: lxc
-          image: "images:debian/13"
-          addresses: []
-          limits:
-            cpu: 2
-            memory: 4G
-          volumes:
-            - name: root
-              size: 20G
-              type: root
-          services:
-            - name: vault-ssh
-              type: port
-              map:  2220:22
-        - name: vault
-          type: oci
-          image: "docker.io/hashicorp/vault:latest"
-          addresses: []
-          limits:
-            cpu: 1
-            memory: 4G
-          volumes:
-            - name: config
-              size: 1G
-              type: files
-              mount: "zvol0/vault-config:/vault/config.d"
-            - name: vault
-              size: 4G
-              type: files
-              mount: "zvol0/vault-file:/vault/file"
-            - name: logs
-              size: 10G
-              type: files
-              mount: "zvol0/vault-logs:/vault/logs"
-          services:
-            - name: vault-ssh
-              type: lxc
-              map:  8200/tcp:8200
-        - name: media
-          type: lxc
-          image: "images:alpha/latest"
-          fqdn: media.bastion.home.arpa
-          addresses: []
-          limits:
-            cpu: 1
-            memory: 4G
-          volumes:
-            - name: media-input
-              size: 10G
-              type: files
-              mount: zvol0/media-input:/input"
-            - name: media-output
-              size: 10G
-              type: files
-              mount: "zvol0/media-output:/output"
-          services:
-            - name: media-ssh
-              type: port
-              map:  22222:22
-          config:
-            - name: rsync services
-              exec: |-
-                sudo apt update
-                sudo apt install -y rsync
-                sudo systemctl enable rsync
+  storages:
+    - storage: local
+      volumes:
+    - storage: zvol0
+      volumes:
+        - name: vault-config
+          type: container
+        - name: vault-logs
+          type: container
+        - name: vault-file
+          type: container
+    - storage: zvol1
+      volumes:
+        - name: vault-root
+
+  networks:
+    - name: vmbr0
+      type: physique
+      config:
+        parent: enp101s1
+      managed: true
+    - name: incusbr0
+      config:
+        ipv4.addess: 10.0.10.1/24
+        ipv4.nat: true
+      type: bridge
+
+  servers:
+    - name: the-bastion
+      type: container
+      image: "images:debian/13"
+      fqdn: the-bastion.incus
+      limits:
+        cpu: 2
+        memory: 4G
+      volumes:
+        - name: vault-root
+          size: 20G
+          type: root
+          pool: zvol1
+      services:
+        - name: vault-ssh
+          type: port
+          map:  2020:22
+    - name: the-vault
+      type: container
+      image: "docker.io/hashicorp/vault:latest"
+      fqdn: the-vault.incus
+      limits:
+        cpu: 1
+        memory: 4G
+      volumes:
+        - name: vault-config
+          size: 1G
+          type: files
+          pool: zvol0
+          mount: "vault-config:/vault/config.d"
+        - name: vault-file
+          size: 4G
+          type: files
+          pool: zvol0
+          mount: "vault-file:/vault/file"
+        - name: vault-logs
+          size: 10G
+          type: files
+          pool: zvol0
+          mount: "vault-logs:/vault/logs"
+      services:
+        - name: vault-ssh
+          type: proxy
+          map:  8200/tcp:8200
+    - name: the-media
+      type: container
+      image: "images:alpine/latest"
+      fqdn: the-media.incus
+      limits:
+        cpu: 1
+        memory: 4G
+      volumes:
+        - name: media-input
+          size: 10G
+          type: files
+          pool: zvol0
+          mount: "media-input:/input"
+        - name: media-output
+          size: 10G
+          type: files
+          pool: zvol0
+          mount: "media-output:/output"
+      services:
+        - name: media-ssh
+          type: port
+          map:  22222:22
+      config:
+        - name: rsync services
+          exec: |-
+            sudo apt update
+            sudo apt install -y rsync
+            sudo systemctl enable rsync
